@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Convertidor de Planillas PDF a Excel</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #dfe3e8;
+    --text: #1c2430;
+    --muted: #6b7684;
+    --accent: #2f6fed;
+    --accent-dark: #1f4fb8;
+    --accent-soft: #eef3ff;
+    --ok: #1f9d55;
+    --warn-bg: #fff6cc;
+    --warn-border: #e8cf4a;
+    --warn-text: #8a6d00;
+    --warn-strong: #5c4900;
+    --danger: #c0392b;
+    --disabled: #b9c3d1;
+    --row-hover: #eef1f5;
+    --row-border: #eef0f3;
+    --badge-bg: #e3e8ee;
+    --badge-text: #45505c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c;
+      --panel: #1a1e28;
+      --border: #2b3140;
+      --text: #e6e9f0;
+      --muted: #8b93a5;
+      --accent: #5b8dff;
+      --accent-dark: #85a8ff;
+      --accent-soft: #202940;
+      --ok: #3ecf76;
+      --warn-bg: #3a3315;
+      --warn-border: #b89b2e;
+      --warn-text: #e0c14c;
+      --warn-strong: #f0dc8c;
+      --danger: #e0574a;
+      --disabled: #3a4152;
+      --row-hover: #212736;
+      --row-border: #232a38;
+      --badge-bg: #262d3d;
+      --badge-text: #c3cadb;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151c;
+    --panel: #1a1e28;
+    --border: #2b3140;
+    --text: #e6e9f0;
+    --muted: #8b93a5;
+    --accent: #5b8dff;
+    --accent-dark: #85a8ff;
+    --accent-soft: #202940;
+    --ok: #3ecf76;
+    --warn-bg: #3a3315;
+    --warn-border: #b89b2e;
+    --warn-text: #e0c14c;
+    --warn-strong: #f0dc8c;
+    --danger: #e0574a;
+    --disabled: #3a4152;
+    --row-hover: #212736;
+    --row-border: #232a38;
+    --badge-bg: #262d3d;
+    --badge-text: #c3cadb;
+  }
+  :root[data-theme="light"] {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #dfe3e8;
+    --text: #1c2430;
+    --muted: #6b7684;
+    --accent: #2f6fed;
+    --accent-dark: #1f4fb8;
+    --accent-soft: #eef3ff;
+    --ok: #1f9d55;
+    --warn-bg: #fff6cc;
+    --warn-border: #e8cf4a;
+    --warn-text: #8a6d00;
+    --warn-strong: #5c4900;
+    --danger: #c0392b;
+    --disabled: #b9c3d1;
+    --row-hover: #eef1f5;
+    --row-border: #eef0f3;
+    --badge-bg: #e3e8ee;
+    --badge-text: #45505c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 24px 32px 8px;
+  }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 16px 32px 64px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .upload-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  input[type=file] { font-size: 14px; }
+  button {
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    background: var(--accent);
+    color: white;
+  }
+  button:disabled { background: var(--disabled); cursor: not-allowed; }
+  button:not(:disabled):hover { background: var(--accent-dark); }
+  button.secondary {
+    background: var(--panel);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  button.secondary:not(:disabled):hover { background: var(--accent-soft); }
+  #status { font-size: 13px; color: var(--muted); min-height: 18px; }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    margin-top: 4px;
+  }
+  .stat {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+  }
+  .stat .label { font-size: 12px; color: var(--muted); }
+  .stat .value { font-size: 20px; font-weight: 700; margin-top: 2px; }
+  .stat.ok .value { color: var(--ok); }
+  .stat.warn .value { color: var(--warn-text); }
+  .stat.danger .value { color: var(--danger); }
+  .table-wrap {
+    overflow-x: auto;
+    max-height: 480px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; white-space: nowrap; }
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--row-hover);
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    z-index: 1;
+  }
+  tbody td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--row-border);
+  }
+  tr.revisar td { background: var(--warn-bg); }
+  tr.revisar td:first-child { border-left: 3px solid var(--warn-border); }
+  .motivo { max-width: 320px; white-space: normal; color: var(--warn-text); font-size: 11.5px; }
+  .badge {
+    display: inline-block;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--badge-bg);
+    color: var(--badge-text);
+  }
+  .badge.warn { background: var(--warn-border); color: var(--warn-strong); }
+  #history-panel table { font-size: 12px; }
+  #history-panel th, #history-panel td { padding: 6px 10px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Convertidor de Planillas PDF a Excel</h1>
+  <p>Caja de Crédito de Nueva Concepción — Planilla por Centro de Costo. Todo se procesa en tu navegador, nada se sube a un servidor.</p>
+</header>
+<main>
+  <section class="panel">
+    <div class="upload-row">
+      <input type="file" id="fileInput" accept="application/pdf">
+      <button id="convertBtn" disabled>Convertir</button>
+      <button id="downloadBtn" class="secondary" disabled>Descargar Excel</button>
+    </div>
+    <div id="status"></div>
+  </section>
+
+  <section class="panel" id="summary-panel" style="display:none;">
+    <div class="summary-grid">
+      <div class="stat" id="stat-total">
+        <div class="label">Filas convertidas</div>
+        <div class="value">–</div>
+      </div>
+      <div class="stat" id="stat-checksum">
+        <div class="label">TOTAL GENERAL del PDF</div>
+        <div class="value">–</div>
+      </div>
+      <div class="stat warn" id="stat-revisar">
+        <div class="label">Filas en revisión manual</div>
+        <div class="value">–</div>
+      </div>
+    </div>
+    <div id="checksum-warning" class="hint" style="display:none; color:var(--warn-text);"></div>
+  </section>
+
+  <section class="panel" id="preview-panel" style="display:none;">
+    <h3 style="margin-top:0;">Vista previa</h3>
+    <p class="hint">Las filas resaltadas en amarillo no se pudieron separar/verificar automáticamente. Revisalas contra el PDF original antes de usar el Excel.</p>
+    <div class="table-wrap">
+      <table id="previewTable">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" id="history-panel" style="display:none;">
+    <h3 style="margin-top:0;">Historial de planillas procesadas en este navegador</h3>
+    <p class="hint">Si el % en revisión manual empieza a crecer de forma sostenida entre planillas, probablemente apareció un patrón de código nuevo (ver sección 4.6 del spec) que conviene agregar como caso explícito.</p>
+    <table id="historyTable">
+      <thead>
+        <tr><th>Fecha</th><th>Archivo</th><th>Filas</th><th>Revisión manual</th><th>%</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+<footer>Procesamiento 100% local — el PDF nunca sale de tu computadora.</footer>
+
+<script>
+"use strict";
+
+/* ============================================================
+   PARSER — port 1:1 del prototipo Python validado (parser_prototipo.py)
+   ============================================================ */
+
+const CONECTORES = new Set(["DE", "DEL", "LA", "Y"]);
+
+const CASO_B_RE = /^[A-Z]\d{2}[A-Z]\d{2}[A-Z]/;
+const CASO_C_RE = /^\d{6}/;
+const EMPLEADO_RE = /^\d{1,3}\s+\S+\s+[A-ZÁÉÍÓÚÑ].*\d/;
+const MONEY_TOKEN_RE = /^-?\$?[\d,]+(\.\d{1,2})?$/;
+
+const EXCLUDE_LINE_PATTERNS = [
+  /^CAJA DE CR[ÉE]DITO/,
+  /^PLANILLA QUINCENAL/,
+  /^INGRESOS\s+DESCUENTOS/,
+  /^Corr\.?\s+C[oó]digo/,
+  /^Festivo\s+Comisiones/,
+  /^Laborado\s+Mensual/,
+  /^TOTALES POR CENTRO/,
+  /^TOTAL EMPLEADOS/,
+  /^TOTAL GENERAL/,
+  /^Elaborado\s+Revisado\s+Autorizado/,
+  /^\d{1,2}\/\d{1,2}\/\d{4}/,
+];
+
+const AGENCY_CANDIDATE_RE = /^[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ /.\-]+$/;
+
+const COLUMNS = [
+  "Dias Laborados", "Salario Mensual", "Salario Quincenal", "Horas Extra",
+  "Otros Ingreso", "Festivo", "Comisiones", "Vacaciones", "Salario Devengado",
+  "AFP", "ISSS", "Renta", "Inst. Financieras", "Prestamos Empleados",
+  "Otros Desc.", "Total Desc.", "Liquido a Recibir",
+];
+
+function cleanMoney(token) {
+  return parseFloat(token.replace(/\$/g, "").replace(/,/g, ""));
+}
+
+function tryCleanMoney(token) {
+  if (MONEY_TOKEN_RE.test(token)) {
+    const v = cleanMoney(token);
+    if (!Number.isNaN(v)) return { value: v, ok: true };
+  }
+  return { value: null, ok: false };
+}
+
+function isExcludedLine(line) {
+  const stripped = line.trim();
+  if (!stripped) return true;
+  return EXCLUDE_LINE_PATTERNS.some((re) => re.test(stripped));
+}
+
+// Genera todas las combinaciones posibles de iniciales, incluyendo/excluyendo
+// cada palabra conectora (DE, DEL, LA, Y) de forma independiente.
+function computeInitialsVariants(nameWords) {
+  const connectorFlags = nameWords.map((w) => CONECTORES.has(w));
+  let nConnectors = connectorFlags.filter(Boolean).length;
+  if (nConnectors > 8) nConnectors = 8; // evitar explosion combinatoria
+
+  const results = new Set();
+  const totalCombos = 1 << nConnectors;
+  for (let combo = 0; combo < totalCombos; combo++) {
+    let bit = 0;
+    let initials = "";
+    for (let i = 0; i < nameWords.length; i++) {
+      const w = nameWords[i];
+      if (connectorFlags[i]) {
+        const include = (combo >> bit) & 1;
+        bit++;
+        if (include) initials += w[0];
+      } else {
+        initials += w[0];
+      }
+    }
+    results.add(initials);
+  }
+  return results;
+}
+
+function stripTrailingDigits(code, maxDigits = 2) {
+  const variants = [];
+  for (let n = 0; n <= maxDigits; n++) {
+    let letters;
+    if (n === 0) {
+      letters = code;
+    } else {
+      if (code.length <= n || !/^\d+$/.test(code.slice(-n))) continue;
+      letters = code.slice(0, -n);
+    }
+    if (/^[A-Za-zÁÉÍÓÚÑáéíóúñ]+$/.test(letters)) variants.push(letters);
+  }
+  return variants;
+}
+
+function tryInitialsMatch(codeCandidate, nameWords) {
+  if (!nameWords.length) return false;
+  const letterVariants = stripTrailingDigits(codeCandidate);
+  if (!letterVariants.length) return false;
+  const initialsVariants = computeInitialsVariants(nameWords);
+  return letterVariants.some((letters) => initialsVariants.has(letters));
+}
+
+// Aplica el orden de reglas de la seccion 4.5. Devuelve {codigo, nombre, caso, revisar}.
+function parseCodigoNombre(blobTokens) {
+  if (!blobTokens.length) return { codigo: "", nombre: "", caso: null, revisar: true };
+
+  const first = blobTokens[0];
+  const resto = blobTokens.slice(1);
+
+  // Caso A: el primer token YA es el codigo completo (habia espacio real en el PDF)
+  if (tryInitialsMatch(first, resto)) {
+    return { codigo: first, nombre: resto.join(" "), caso: "A", revisar: false };
+  }
+
+  // Caso B: 7 caracteres Letra-Digito-Digito-Letra-Digito-Digito-Letra pegados
+  if (CASO_B_RE.test(first)) {
+    const codigo = first.slice(0, 7);
+    const restoPrimeraPalabra = first.slice(7);
+    const nombre = (restoPrimeraPalabra + " " + resto.join(" ")).trim();
+    return { codigo, nombre, caso: "B", revisar: false };
+  }
+
+  // Caso C: 6 digitos pegados
+  if (CASO_C_RE.test(first)) {
+    const codigo = first.slice(0, 6);
+    const restoPrimeraPalabra = first.slice(6);
+    const nombre = (restoPrimeraPalabra + " " + resto.join(" ")).trim();
+    return { codigo, nombre, caso: "C", revisar: false };
+  }
+
+  // Caso D: iniciales pegadas, probar puntos de corte 3..7 (o hasta len-1)
+  const maxCut = Math.min(7, first.length - 1);
+  for (let cut = 3; cut <= maxCut; cut++) {
+    const codigoCandidato = first.slice(0, cut);
+    const primeraPalabraNombre = first.slice(cut);
+    if (!primeraPalabraNombre) continue;
+    const candidateWords = [primeraPalabraNombre, ...resto];
+    if (tryInitialsMatch(codigoCandidato, candidateWords)) {
+      return { codigo: codigoCandidato, nombre: candidateWords.join(" "), caso: "D", revisar: false };
+    }
+  }
+
+  // Ningun caso aplico con certeza -> revisar manualmente, NO se adivina
+  return { codigo: first, nombre: blobTokens.join(" "), caso: null, revisar: true };
+}
+
+/* ============================================================
+   EXTRACCION DE TEXTO DEL PDF (pdf.js) -> lineas de texto
+   Agrupa items por coordenada Y (como pdfplumber agrupa por fila)
+   ============================================================ */
+
+// Devuelve {text, overlap} por linea. "overlap" = true cuando dos items de
+// texto se solapan fisicamente en X (el borde derecho de uno invade el
+// inicio del siguiente) — senal objetiva y basada en coordenadas (no en
+// contenido) de que el PDF tiene texto mal formado/superpuesto en esa fila
+// (ej. un nombre muy largo que invade la columna de "Dias Laborados").
+// A diferencia de heuristicas de contenido (como "palabra repetida"), esto
+// no da falsos positivos con apellidos dobles legitimos (ej. "ORELLANA
+// ORELLANA"), que no se solapan en X aunque se repitan textualmente.
+async function extractLines(pdfDoc) {
+  const allLines = [];
+  for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+    const page = await pdfDoc.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    // pdf.js sintetiza items " " (solo espacio) para representar saltos de
+    // columna grandes (ajustes de kerning del operador TJ); su "width"
+    // reportado es la distancia completa del salto, NO el ancho visual de un
+    // espacio, asi que se descartan aqui: solo importan para decidir donde
+    // el texto real se separa, y eso ya lo cubre el gap entre items reales.
+    const items = textContent.items
+      .map((it) => ({
+        str: it.str,
+        x: it.transform[4],
+        y: it.transform[5],
+        width: it.width,
+      }))
+      .filter((it) => it.str.trim().length > 0);
+
+    const yTol = 2.5;
+    const groups = [];
+    for (const it of items) {
+      let group = groups.find((g) => Math.abs(g.y - it.y) <= yTol);
+      if (!group) {
+        group = { y: it.y, items: [] };
+        groups.push(group);
+      }
+      group.items.push(it);
+    }
+    groups.sort((a, b) => b.y - a.y);
+
+    for (const g of groups) {
+      g.items.sort((a, b) => a.x - b.x);
+      let lineStr = "";
+      let prevEndX = null;
+      let overlap = false;
+      for (const it of g.items) {
+        if (prevEndX !== null) {
+          const gap = it.x - prevEndX;
+          // Solapamiento real entre dos fragmentos de texto con contenido
+          // (no relleno): senal objetiva de texto duplicado/mal formado en
+          // el PDF (ver fila 22 de la muestra: dos capas de texto
+          // superpuestas en la misma celda). Se usa un umbral de -8pt: los
+          // codigos Caso B/C/D pegados al nombre tienen un leve solape de
+          // kerning normal (-1 a -6.5pt observado en los 95 casos reales),
+          // mientras que el solape genuino de una celda corrupta es mucho
+          // mayor (-12 a -15pt observado). No confundir uno con otro.
+          if (gap < -8) overlap = true;
+          if (gap > 1.2) lineStr += " ";
+        }
+        lineStr += it.str;
+        prevEndX = it.x + it.width;
+      }
+      allLines.push({ text: lineStr.trim(), overlap });
+    }
+  }
+  return allLines;
+}
+
+/* ============================================================
+   PARSEO DE FILAS -> filas de empleado estructuradas
+   ============================================================ */
+
+function parseLines(lineObjs) {
+  const rows = [];
+  let currentAgency = null;
+  let pendingAgencyCandidate = null;
+  let totalGeneralDeclarado = null;
+
+  for (const lineObj of lineObjs) {
+    const line = lineObj.text.trim();
+    const lineHasOverlap = lineObj.overlap;
+    if (!line) continue;
+
+    const tgMatch = line.match(/^TOTAL GENERAL\s+(\d+)/);
+    if (tgMatch) {
+      totalGeneralDeclarado = parseInt(tgMatch[1], 10);
+      continue;
+    }
+
+    if (isExcludedLine(line)) {
+      pendingAgencyCandidate = null;
+      continue;
+    }
+
+    if (EMPLEADO_RE.test(line)) {
+      pendingAgencyCandidate = null;
+      const tokens = line.split(/\s+/);
+      const corr = tokens[0];
+
+      if (tokens.length < 18) {
+        rows.push({
+          corr,
+          codigo: "",
+          nombre: tokens.slice(1).join(" "),
+          agencia: currentAgency,
+          revisar: true,
+          motivo: "No se encontraron las 17 columnas numericas esperadas",
+          caso: null,
+          amounts: {},
+          lineaCruda: line,
+        });
+        continue;
+      }
+
+      const amountsTokens = tokens.slice(-17);
+      const blobTokens = tokens.slice(1, tokens.length - 17);
+
+      const { codigo, nombre, caso, revisar: revisarCodigo } = parseCodigoNombre(blobTokens);
+
+      const amounts = {};
+      const columnasCorruptas = [];
+      COLUMNS.forEach((colName, i) => {
+        const { value, ok } = tryCleanMoney(amountsTokens[i]);
+        amounts[colName] = value;
+        if (!ok) columnasCorruptas.push(colName);
+      });
+
+      const motivos = [];
+      if (revisarCodigo) {
+        motivos.push("Ningun patron A/B/C/D coincidio con certeza para separar codigo/nombre");
+      }
+      if (lineHasOverlap) {
+        motivos.push(
+          "Se detecto texto fisicamente solapado en el PDF en esta fila (posible nombre largo invadiendo la columna numerica) -- verificar contra el PDF original"
+        );
+      }
+      if (columnasCorruptas.length) {
+        motivos.push(
+          "Texto solapado en el PDF (columna angosta / nombre largo) corrompio: " +
+          columnasCorruptas.join(", ") +
+          " -- el nombre extraido puede estar truncado, verificar contra el PDF original"
+        );
+      }
+
+      let aritmeticaFalla = false;
+      if (!columnasCorruptas.length) {
+        const salarioDevengado = amounts["Salario Devengado"];
+        const descCols = ["AFP", "ISSS", "Renta", "Inst. Financieras", "Prestamos Empleados", "Otros Desc."];
+        const sumaDescuentos = descCols.reduce((s, c) => s + amounts[c], 0);
+        const totalDesc = amounts["Total Desc."];
+        const liquido = amounts["Liquido a Recibir"];
+        if (Math.round((sumaDescuentos - totalDesc) * 100) / 100 !== 0) {
+          motivos.push(`Total Desc. (${totalDesc}) no coincide con la suma de descuentos (${Math.round(sumaDescuentos * 100) / 100})`);
+          aritmeticaFalla = true;
+        }
+        if (Math.round(((salarioDevengado - totalDesc) - liquido) * 100) / 100 !== 0) {
+          motivos.push(`Liquido a Recibir (${liquido}) no coincide con Salario Devengado - Total Desc. (${Math.round((salarioDevengado - totalDesc) * 100) / 100})`);
+          aritmeticaFalla = true;
+        }
+      }
+
+      const revisar = revisarCodigo || columnasCorruptas.length > 0 || aritmeticaFalla || lineHasOverlap;
+
+      rows.push({
+        corr,
+        codigo,
+        nombre,
+        agencia: currentAgency,
+        revisar,
+        motivo: motivos.join("; "),
+        caso,
+        amounts,
+        lineaCruda: line,
+      });
+      continue;
+    }
+
+    if (AGENCY_CANDIDATE_RE.test(line)) {
+      if (pendingAgencyCandidate === line) {
+        currentAgency = line;
+        pendingAgencyCandidate = null;
+      } else {
+        pendingAgencyCandidate = line;
+        currentAgency = line;
+      }
+    } else {
+      pendingAgencyCandidate = null;
+    }
+  }
+
+  return { rows, totalGeneralDeclarado };
+}
+
+/* ============================================================
+   UI
+   ============================================================ */
+
+const fileInput = document.getElementById("fileInput");
+const convertBtn = document.getElementById("convertBtn");
+const downloadBtn = document.getElementById("downloadBtn");
+const statusEl = document.getElementById("status");
+const summaryPanel = document.getElementById("summary-panel");
+const previewPanel = document.getElementById("preview-panel");
+const historyPanel = document.getElementById("history-panel");
+
+let selectedFile = null;
+let lastResult = null; // { rows, totalGeneralDeclarado, fileName }
+
+if (window["pdfjsLib"]) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
+fileInput.addEventListener("change", () => {
+  selectedFile = fileInput.files[0] || null;
+  convertBtn.disabled = !selectedFile;
+  statusEl.textContent = selectedFile ? `Archivo seleccionado: ${selectedFile.name}` : "";
+});
+
+convertBtn.addEventListener("click", async () => {
+  if (!selectedFile) return;
+  convertBtn.disabled = true;
+  downloadBtn.disabled = true;
+  statusEl.textContent = "Leyendo PDF...";
+
+  try {
+    const arrayBuffer = await selectedFile.arrayBuffer();
+    const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    statusEl.textContent = `Extrayendo texto de ${pdfDoc.numPages} pagina(s)...`;
+    const lines = await extractLines(pdfDoc);
+
+    if (!lines.some((l) => EMPLEADO_RE.test(l.text.trim()))) {
+      statusEl.textContent = "No se reconoció el formato de este PDF.";
+      convertBtn.disabled = false;
+      return;
+    }
+
+    const { rows, totalGeneralDeclarado } = parseLines(lines);
+    lastResult = { rows, totalGeneralDeclarado, fileName: selectedFile.name };
+
+    renderSummary(rows, totalGeneralDeclarado);
+    renderPreview(rows);
+    saveHistoryEntry(selectedFile.name, rows);
+    renderHistory();
+
+    downloadBtn.disabled = false;
+    statusEl.textContent = `Conversión completa: ${rows.length} filas.`;
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Ocurrió un error leyendo el PDF: " + err.message;
+  } finally {
+    convertBtn.disabled = false;
+  }
+});
+
+function renderSummary(rows, totalGeneral) {
+  summaryPanel.style.display = "";
+  document.querySelector("#stat-total .value").textContent = rows.length;
+  document.querySelector("#stat-checksum .value").textContent =
+    totalGeneral === null ? "no encontrado" : totalGeneral;
+  const revisarCount = rows.filter((r) => r.revisar).length;
+  document.querySelector("#stat-revisar .value").textContent =
+    `${revisarCount} (${rows.length ? Math.round((revisarCount / rows.length) * 100) : 0}%)`;
+
+  const warnEl = document.getElementById("checksum-warning");
+  if (totalGeneral !== null && totalGeneral !== rows.length) {
+    warnEl.style.display = "";
+    warnEl.textContent = `Atención: el conteo de filas parseadas (${rows.length}) no coincide con TOTAL GENERAL (${totalGeneral}) del PDF. Revisá el archivo.`;
+  } else {
+    warnEl.style.display = "none";
+  }
+}
+
+function renderPreview(rows) {
+  previewPanel.style.display = "";
+  const thead = document.querySelector("#previewTable thead");
+  const tbody = document.querySelector("#previewTable tbody");
+
+  const headers = ["Corr.", "Codigo", "Nombre Empleado", "Agencia / Centro de Costo", ...COLUMNS, "Caso", "Motivo revisión", "Línea cruda del PDF"];
+  thead.innerHTML = "<tr>" + headers.map((h) => `<th>${h}</th>`).join("") + "</tr>";
+
+  tbody.innerHTML = rows.map((r) => {
+    const cells = [
+      r.corr,
+      r.codigo,
+      r.nombre,
+      r.agencia || "",
+      ...COLUMNS.map((c) => (r.amounts[c] === null || r.amounts[c] === undefined ? "" : r.amounts[c].toFixed(2))),
+    ].map((v) => `<td>${escapeHtml(String(v))}</td>`).join("");
+    const casoBadge = r.caso
+      ? `<span class="badge">${r.caso}</span>`
+      : r.revisar ? `<span class="badge warn">?</span>` : "";
+    const motivoCell = `<td>${casoBadge}</td><td class="motivo">${escapeHtml(r.motivo || "")}</td>`;
+    const crudaCell = `<td class="motivo">${r.revisar ? escapeHtml(r.lineaCruda || "") : ""}</td>`;
+    return `<tr class="${r.revisar ? "revisar" : ""}">${cells}${motivoCell}${crudaCell}</tr>`;
+  }).join("");
+}
+
+function escapeHtml(str) {
+  return str.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/* ============================================================
+   HISTORIAL (seccion 4.6: contador de filas en revision por planilla)
+   ============================================================ */
+
+const HISTORY_KEY = "planillas_historial_v1";
+
+function saveHistoryEntry(fileName, rows) {
+  const revisarCount = rows.filter((r) => r.revisar).length;
+  const entry = {
+    fecha: new Date().toLocaleString("es-SV"),
+    archivo: fileName,
+    filas: rows.length,
+    revisar: revisarCount,
+    pct: rows.length ? Math.round((revisarCount / rows.length) * 1000) / 10 : 0,
+  };
+  let history = [];
+  try {
+    history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch (e) {
+    history = [];
+  }
+  history.unshift(entry);
+  history = history.slice(0, 50);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+}
+
+function renderHistory() {
+  let history = [];
+  try {
+    history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch (e) {
+    history = [];
+  }
+  if (!history.length) return;
+  historyPanel.style.display = "";
+  const tbody = document.querySelector("#historyTable tbody");
+  tbody.innerHTML = history.map((h) => `
+    <tr>
+      <td>${escapeHtml(h.fecha)}</td>
+      <td>${escapeHtml(h.archivo)}</td>
+      <td>${h.filas}</td>
+      <td>${h.revisar}</td>
+      <td>${h.pct}%</td>
+    </tr>`).join("");
+}
+
+/* ============================================================
+   GENERACION DEL EXCEL (ExcelJS) con resaltado amarillo
+   ============================================================ */
+
+downloadBtn.addEventListener("click", async () => {
+  if (!lastResult) return;
+  downloadBtn.disabled = true;
+  statusEl.textContent = "Generando Excel...";
+
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Planilla");
+
+    const headers = ["Corr.", "Codigo", "Nombre Empleado", "Agencia / Centro de Costo", ...COLUMNS, "revisar_manualmente", "motivo_revision"];
+    sheet.addRow(headers);
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF1F5" } };
+
+    for (const r of lastResult.rows) {
+      const rowValues = [
+        Number(r.corr),
+        r.codigo,
+        r.nombre,
+        r.agencia || "",
+        ...COLUMNS.map((c) => (r.amounts[c] === null || r.amounts[c] === undefined ? null : r.amounts[c])),
+        r.revisar ? "TRUE" : "FALSE",
+        r.motivo || "",
+      ];
+      const excelRow = sheet.addRow(rowValues);
+      if (r.revisar) {
+        excelRow.eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2A8" } };
+        });
+      }
+    }
+
+    // Formato numerico real (no texto) en las columnas de montos
+    const firstAmountCol = 5; // A=Corr,B=Codigo,C=Nombre,D=Agencia,E=primer monto
+    for (let i = 0; i < COLUMNS.length; i++) {
+      sheet.getColumn(firstAmountCol + i).numFmt = "#,##0.00";
+    }
+    sheet.getColumn(1).numFmt = "0";
+
+    sheet.columns.forEach((col, idx) => {
+      const header = headers[idx] || "";
+      col.width = Math.max(10, Math.min(40, header.length + 4));
+    });
+    sheet.getColumn(3).width = 38; // Nombre
+    sheet.getColumn(headers.length).width = 60; // motivo_revision
+    sheet.views = [{ state: "frozen", ySplit: 1 }];
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const baseName = (lastResult.fileName || "planilla").replace(/\.pdf$/i, "");
+    a.href = url;
+    a.download = `${baseName}_convertida.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    statusEl.textContent = "Excel descargado.";
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Error generando el Excel: " + err.message;
+  } finally {
+    downloadBtn.disabled = false;
+  }
+});
+
+renderHistory();
+</script>
+</body>
+</html>
