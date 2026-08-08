@@ -429,7 +429,36 @@ function tryCleanMoney(token) {
     const v = cleanMoney(token);
     if (!Number.isNaN(v)) return { value: v, ok: true };
   }
+  // A veces el '$' del monto siguiente queda pegado al final de este token
+  // por un problema de espaciado en el PDF (ej. '$15.00$' + '1,554.20' en
+  // vez de '$15.00' + '$1,554.20'). Si quitando ese '$' sobrante al final el
+  // resto es un monto valido, se usa: no es adivinar un valor, es descartar
+  // un caracter que claramente no pertenece a este numero.
+  if (token.endsWith("$") && MONEY_TOKEN_RE.test(token.slice(0, -1))) {
+    const v = cleanMoney(token.slice(0, -1));
+    if (!Number.isNaN(v)) return { value: v, ok: true };
+  }
   return { value: null, ok: false };
+}
+
+const GLUED_MONEY_RE = /^(\$[\d,]+\.\d{2}){2,}$/;
+const SINGLE_MONEY_RE = /\$[\d,]+\.\d{2}/g;
+
+// Si dos (o mas) montos con signo $ quedaron pegados sin espacio en el PDF,
+// esto le resta un token a la fila y corre todas las columnas siguientes.
+// Cada monto es reconocible por separado (su propio '$' y dos decimales),
+// asi que separarlos es seguro -- no es adivinar, es deshacer la falta de
+// un espacio.
+function splitGluedMoneyTokens(tokens) {
+  const result = [];
+  for (const t of tokens) {
+    if (GLUED_MONEY_RE.test(t)) {
+      result.push(...t.match(SINGLE_MONEY_RE));
+    } else {
+      result.push(t);
+    }
+  }
+  return result;
 }
 
 function isExcludedLine(line) {
@@ -634,7 +663,7 @@ function parseLines(lineObjs, columnsOrder) {
 
     if (EMPLEADO_RE.test(line)) {
       pendingAgencyCandidate = null;
-      const tokens = line.split(/\s+/);
+      const tokens = splitGluedMoneyTokens(line.split(/\s+/));
       const corr = tokens[0];
 
       if (tokens.length < 18) {
@@ -912,17 +941,13 @@ downloadBtn.addEventListener("click", async () => {
 
     // Totales por agencia + total general (seccion "primero necesito que me
     // totalices los excels"): suma cada columna de monto, igual que las
-    // filas "TOTALES POR CENTRO DE COSTO" / "TOTAL GENERAL" del PDF, para
-    // poder cruzar cifras sin salir de Excel. Las filas marcadas para
-    // revision (revisar_manualmente) se EXCLUYEN de la suma -- sus montos
-    // pueden estar corridos/incompletos por texto solapado en el PDF, y
-    // sumarlos silenciosamente daria un total incorrecto. En vez de eso se
-    // cuentan aparte y se informan en la misma fila de totales.
+    // fila "TOTAL GENERAL" del PDF, para poder cruzar cifras sin salir de
+    // Excel. Las filas marcadas para revision (revisar_manualmente) se
+    // EXCLUYEN de la suma -- sus montos pueden estar corridos/incompletos
+    // por texto solapado en el PDF, y sumarlos silenciosamente daria un
+    // total incorrecto. En vez de eso se cuentan aparte y se informan en la
+    // misma fila de totales.
     const emptyAccum = () => Object.fromEntries(COLUMNS_FALLBACK.map((c) => [c, 0]));
-    let agencyAccum = emptyAccum();
-    let agencyCount = 0;
-    let agencyExcluded = 0;
-    let agencyLabel = null;
     const grandAccum = emptyAccum();
     let grandCount = 0;
     let grandExcluded = 0;
@@ -944,14 +969,6 @@ downloadBtn.addEventListener("click", async () => {
     }
 
     for (const r of lastResult.rows) {
-      if (agencyLabel !== null && r.agencia !== agencyLabel) {
-        addTotalRow(`TOTALES ${agencyLabel}`, agencyAccum, agencyCount, agencyExcluded, "FFDCE6F1");
-        agencyAccum = emptyAccum();
-        agencyCount = 0;
-        agencyExcluded = 0;
-      }
-      agencyLabel = r.agencia;
-
       const rowValues = [
         Number(r.corr),
         r.codigo,
@@ -968,25 +985,19 @@ downloadBtn.addEventListener("click", async () => {
         });
       }
 
-      agencyCount += 1;
       grandCount += 1;
       if (r.revisar) {
-        agencyExcluded += 1;
         grandExcluded += 1;
       } else {
         for (const c of COLUMNS_FALLBACK) {
           const v = r.amounts[c];
           if (typeof v === "number") {
-            agencyAccum[c] += v;
             grandAccum[c] += v;
           }
         }
       }
     }
 
-    if (agencyLabel !== null) {
-      addTotalRow(`TOTALES ${agencyLabel}`, agencyAccum, agencyCount, agencyExcluded, "FFDCE6F1");
-    }
     if (grandCount > 0) {
       addTotalRow("TOTAL GENERAL", grandAccum, grandCount, grandExcluded, "FFB8CCE4");
     }
