@@ -267,6 +267,23 @@
 
 const CONECTORES = new Set(["DE", "DEL", "LA", "Y"]);
 
+// Si dos palabras consecutivas del nombre son identicas y no son un
+// conector, puede ser una senal de texto duplicado en el PDF -- pero
+// tambien puede ser un apellido doble legitimo (ej. "GUARDADO GUARDADO",
+// confirmado real). Por eso esto NUNCA se usa solo: solo sirve como
+// segunda senal cuando YA hubo un solapamiento fisico detectado (ver
+// overlapSinResolver en parseLines), y una excepcion confirmada en
+// CODIGOS_CONFIRMADOS siempre gana por encima de esto.
+function tieneRepeticionSospechosa(nombre) {
+  const palabras = nombre.split(" ").filter(Boolean);
+  for (let i = 1; i < palabras.length; i++) {
+    if (palabras[i] === palabras[i - 1] && !CONECTORES.has(palabras[i])) {
+      return palabras[i];
+    }
+  }
+  return null;
+}
+
 const CASO_B_RE = /^[A-Z]\d{2}[A-Z]\d{2}[A-Z]/;
 const CASO_C_RE = /^\d{6}/;
 const EMPLEADO_RE = /^\d{1,3}\s+\S+\s+[A-ZÁÉÍÓÚÑ].*\d/;
@@ -556,6 +573,7 @@ function tryInitialsMatch(codeCandidate, nameWords) {
 // excepcion y la fila se marca para revision como cualquier otra.
 const CODIGOS_CONFIRMADOS = {
   LECG: "LILIANA ESTEFANY CARDOZA DE TEJADA",
+  T46B11R: "CRISTOBAL JERONIMO GUARDADO GUARDADO",
 };
 
 // Aplica el orden de reglas de la seccion 4.5. Devuelve {codigo, nombre, caso, revisar}.
@@ -742,6 +760,20 @@ function parseLines(lineObjs, columnsOrder) {
         if (!ok) columnasCorruptas.push(colName);
       });
 
+      // El solapamiento fisico (lineHasOverlap) es una señal cruda de
+      // coordenadas -- avisa que ALGO se solapo en esa fila, pero no dice
+      // si el dato final quedo bien o mal. Si ademas hay una columna
+      // corrupta o una palabra repetida consecutiva en el nombre (senal de
+      // texto duplicado, ver ejemplo real "GUARDADO GUARDADO"), el
+      // solapamiento SI explica un problema real y hay que marcar la fila.
+      // Pero si el nombre y los 17 montos se reconstruyeron limpios (ej.
+      // porque splitGluedMoneyTokens/mergeStrayLeadingLetters ya resolvieron
+      // el pegado), el solapamiento crudo ya quedo resuelto y no hace falta
+      // marcar la fila solo por haberlo detectado.
+      const esExcepcionConfirmada = CODIGOS_CONFIRMADOS[codigo] === nombre;
+      const palabraRepetida = (lineHasOverlap && !esExcepcionConfirmada) ? tieneRepeticionSospechosa(nombre) : null;
+      const overlapSinResolver = lineHasOverlap && (columnasCorruptas.length > 0 || !!palabraRepetida);
+
       const motivos = [];
       if (columnasInciertas) {
         motivos.push(
@@ -751,7 +783,11 @@ function parseLines(lineObjs, columnsOrder) {
       if (revisarCodigo) {
         motivos.push("Ningun patron A/B/C/D coincidio con certeza para separar codigo/nombre");
       }
-      if (lineHasOverlap) {
+      if (palabraRepetida) {
+        motivos.push(
+          `Palabra repetida consecutiva ("${palabraRepetida}") en el nombre extraido -- posible texto duplicado en el PDF, verificar contra el original`
+        );
+      } else if (overlapSinResolver) {
         motivos.push(
           "Se detecto texto fisicamente solapado en el PDF en esta fila (posible nombre largo invadiendo la columna numerica) -- verificar contra el PDF original"
         );
@@ -781,7 +817,7 @@ function parseLines(lineObjs, columnsOrder) {
         }
       }
 
-      const revisar = revisarCodigo || columnasCorruptas.length > 0 || aritmeticaFalla || lineHasOverlap || columnasInciertas;
+      const revisar = revisarCodigo || columnasCorruptas.length > 0 || aritmeticaFalla || overlapSinResolver || columnasInciertas;
 
       rows.push({
         corr,
