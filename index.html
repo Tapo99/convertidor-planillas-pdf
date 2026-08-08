@@ -976,9 +976,11 @@ downloadBtn.addEventListener("click", async () => {
     }
 
     if (grandCount > 0) {
+      // "Dias Laborados" no se totaliza -- sumar dias trabajados entre
+      // empleados distintos no tiene sentido como cifra agregada.
       const rowValues = [
         "", "", "TOTAL GENERAL", `Empleados: ${grandCount}`,
-        ...COLUMNS_FALLBACK.map((c) => Math.round(grandAccum[c] * 100) / 100),
+        ...COLUMNS_FALLBACK.map((c) => (c === "Dias Laborados" ? "" : Math.round(grandAccum[c] * 100) / 100)),
       ];
       const totalRow = sheet.addRow(rowValues);
       totalRow.font = { bold: true };
