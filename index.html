@@ -288,12 +288,137 @@ const EXCLUDE_LINE_PATTERNS = [
 
 const AGENCY_CANDIDATE_RE = /^[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ /.\-]+$/;
 
-const COLUMNS = [
+// Orden de respaldo, solo se usa si detectColumnOrder no logra confirmar el
+// orden real leyendo el encabezado del PDF.
+const COLUMNS_FALLBACK = [
   "Dias Laborados", "Salario Mensual", "Salario Quincenal", "Horas Extra",
-  "Otros Ingreso", "Festivo", "Comisiones", "Vacaciones", "Salario Devengado",
+  "Festivo", "Comisiones", "Vacaciones", "Otros Ingreso", "Salario Devengado",
   "AFP", "ISSS", "Renta", "Inst. Financieras", "Prestamos Empleados",
   "Otros Desc.", "Total Desc.", "Liquido a Recibir",
 ];
+
+// Palabras clave (sin acentos, minusculas) que deben aparecer TODAS en el
+// texto del encabezado detectado para esa columna.
+const CANONICAL_COLUMNS = [
+  ["Dias Laborados", ["dias", "laborado"]],
+  ["Salario Mensual", ["salario", "mensual"]],
+  ["Salario Quincenal", ["salario", "quincenal"]],
+  ["Horas Extra", ["horas", "extra"]],
+  ["Festivo", ["festivo"]],
+  ["Comisiones", ["comisiones"]],
+  ["Vacaciones", ["vacaciones"]],
+  ["Otros Ingreso", ["otros", "ingreso"]],
+  ["Salario Devengado", ["salario", "devengado"]],
+  ["AFP", ["afp"]],
+  ["ISSS", ["isss"]],
+  ["Renta", ["renta"]],
+  ["Inst. Financieras", ["inst", "financieras"]],
+  ["Prestamos Empleados", ["prestamos", "empleados"]],
+  ["Otros Desc.", ["otros", "desc"]],
+  ["Total Desc.", ["total", "desc"]],
+  ["Liquido a Recibir", ["liquido", "recibir"]],
+];
+
+function stripAccents(s) {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+function matchCanonicalColumn(words) {
+  // pdf.js a veces junta dos palabras del encabezado en un solo item de
+  // texto (ej. "Líquido a" con el espacio incluido) mientras que pdfplumber
+  // las separa; se dividen aqui por espacio antes de normalizar para que el
+  // matching funcione igual en ambos casos.
+  const tokens = words.flatMap((w) => w.split(/\s+/)).filter(Boolean);
+  const norm = new Set(tokens.map((w) => stripAccents(w).toLowerCase().replace(/\.$/, "")));
+  for (const [name, keys] of CANONICAL_COLUMNS) {
+    if (keys.every((k) => norm.has(k))) return name;
+  }
+  return null;
+}
+
+// Lee la posicion X de cada encabezado de columna en la primera pagina del
+// PDF y devuelve las 17 columnas ordenadas de izquierda a derecha segun esa
+// posicion real, en vez de asumir un orden fijo (la Caja de Credito puede
+// generar planillas con el bloque de INGRESOS en distinto orden). Devuelve
+// null si no logra confirmar exactamente las 17 columnas conocidas.
+async function detectColumnOrder(pdfDoc) {
+  const page = await pdfDoc.getPage(1);
+  const tc = await page.getTextContent();
+  const items = tc.items
+    .map((it) => ({ str: it.str, x: it.transform[4], y: it.transform[5], width: it.width }))
+    .filter((it) => it.str.trim().length > 0);
+
+  const agenciaYs = items
+    .filter((it) => it.str.trim().toUpperCase().startsWith("AGENCIA"))
+    .map((it) => it.y);
+  if (!agenciaYs.length) return null;
+  const boundaryY = Math.max(...agenciaYs);
+
+  const headerWords = items.filter((it) => {
+    const t = it.str.trim().toUpperCase();
+    return it.x > 200 && it.y > boundaryY + 5 && it.y < boundaryY + 60
+      && t !== "INGRESOS" && t !== "DESCUENTOS";
+  });
+  if (!headerWords.length) return null;
+
+  // Agrupar en "bandas" horizontales (lineas de texto del encabezado) por Y.
+  const yTol = 1.5;
+  const bands = [];
+  for (const w of headerWords) {
+    let band = bands.find((b) => Math.abs(b.y - w.y) <= yTol);
+    if (!band) { band = { y: w.y, words: [] }; bands.push(band); }
+    band.words.push(w);
+  }
+  bands.sort((a, b) => b.y - a.y); // de arriba hacia abajo (Y mayor = mas arriba)
+  if (bands.length < 2) return null;
+
+  const lineA = bands[0].words.slice().sort((a, b) => a.x - b.x);
+  const lineB = bands[bands.length - 1].words.slice().sort((a, b) => a.x - b.x);
+  const lineC = bands.slice(1, -1).flatMap((b) => b.words);
+
+  const usedB = new Set();
+  const columns = [];
+  for (const wa of lineA) {
+    let bestJ = null, bestD = Infinity;
+    for (let j = 0; j < lineB.length; j++) {
+      if (usedB.has(j)) continue;
+      const d = Math.abs(lineB[j].x - wa.x);
+      if (d < bestD) { bestD = d; bestJ = j; }
+    }
+    const wordsInCol = [wa.str];
+    let cx0 = wa.x, cx1 = wa.x + wa.width;
+    if (bestJ !== null && bestD < 20) {
+      const wb = lineB[bestJ];
+      usedB.add(bestJ);
+      wordsInCol.push(wb.str);
+      cx0 = Math.min(cx0, wb.x);
+      cx1 = Math.max(cx1, wb.x + wb.width);
+    }
+    columns.push({ center: (cx0 + cx1) / 2, words: wordsInCol });
+  }
+  lineB.forEach((wb, j) => {
+    if (!usedB.has(j)) columns.push({ center: wb.x + wb.width / 2, words: [wb.str] });
+  });
+  lineC.forEach((wc) => columns.push({ center: wc.x + wc.width / 2, words: [wc.str] }));
+
+  columns.sort((a, b) => a.center - b.center);
+
+  const orderedNames = [];
+  const seen = new Set();
+  for (const col of columns) {
+    const name = matchCanonicalColumn(col.words);
+    if (name && !seen.has(name)) {
+      orderedNames.push(name);
+      seen.add(name);
+    }
+  }
+
+  const expected = new Set(CANONICAL_COLUMNS.map(([name]) => name));
+  const gotSet = new Set(orderedNames);
+  const sameSet = expected.size === gotSet.size && [...expected].every((n) => gotSet.has(n));
+  if (sameSet && orderedNames.length === 17) return orderedNames;
+  return null;
+}
 
 function cleanMoney(token) {
   return parseFloat(token.replace(/\$/g, "").replace(/,/g, ""));
@@ -483,11 +608,13 @@ async function extractLines(pdfDoc) {
    PARSEO DE FILAS -> filas de empleado estructuradas
    ============================================================ */
 
-function parseLines(lineObjs) {
+function parseLines(lineObjs, columnsOrder) {
   const rows = [];
   let currentAgency = null;
   let pendingAgencyCandidate = null;
   let totalGeneralDeclarado = null;
+  const columnasInciertas = !columnsOrder;
+  if (!columnsOrder) columnsOrder = COLUMNS_FALLBACK;
 
   for (const lineObj of lineObjs) {
     const line = lineObj.text.trim();
@@ -532,13 +659,18 @@ function parseLines(lineObjs) {
 
       const amounts = {};
       const columnasCorruptas = [];
-      COLUMNS.forEach((colName, i) => {
+      columnsOrder.forEach((colName, i) => {
         const { value, ok } = tryCleanMoney(amountsTokens[i]);
         amounts[colName] = value;
         if (!ok) columnasCorruptas.push(colName);
       });
 
       const motivos = [];
+      if (columnasInciertas) {
+        motivos.push(
+          "No se pudo confirmar el orden de columnas leyendo el encabezado del PDF; se uso el orden por defecto sin garantia -- verificar todas las columnas de esta planilla"
+        );
+      }
       if (revisarCodigo) {
         motivos.push("Ningun patron A/B/C/D coincidio con certeza para separar codigo/nombre");
       }
@@ -572,7 +704,7 @@ function parseLines(lineObjs) {
         }
       }
 
-      const revisar = revisarCodigo || columnasCorruptas.length > 0 || aritmeticaFalla || lineHasOverlap;
+      const revisar = revisarCodigo || columnasCorruptas.length > 0 || aritmeticaFalla || lineHasOverlap || columnasInciertas;
 
       rows.push({
         corr,
@@ -648,7 +780,8 @@ convertBtn.addEventListener("click", async () => {
       return;
     }
 
-    const { rows, totalGeneralDeclarado } = parseLines(lines);
+    const columnsOrder = await detectColumnOrder(pdfDoc);
+    const { rows, totalGeneralDeclarado } = parseLines(lines, columnsOrder);
     lastResult = { rows, totalGeneralDeclarado, fileName: selectedFile.name };
 
     renderSummary(rows, totalGeneralDeclarado);
@@ -689,7 +822,7 @@ function renderPreview(rows) {
   const thead = document.querySelector("#previewTable thead");
   const tbody = document.querySelector("#previewTable tbody");
 
-  const headers = ["Corr.", "Codigo", "Nombre Empleado", "Agencia / Centro de Costo", ...COLUMNS, "Caso", "Motivo revisión", "Línea cruda del PDF"];
+  const headers = ["Corr.", "Codigo", "Nombre Empleado", "Agencia / Centro de Costo", ...COLUMNS_FALLBACK, "Caso", "Motivo revisión", "Línea cruda del PDF"];
   thead.innerHTML = "<tr>" + headers.map((h) => `<th>${h}</th>`).join("") + "</tr>";
 
   tbody.innerHTML = rows.map((r) => {
@@ -698,7 +831,7 @@ function renderPreview(rows) {
       r.codigo,
       r.nombre,
       r.agencia || "",
-      ...COLUMNS.map((c) => (r.amounts[c] === null || r.amounts[c] === undefined ? "" : r.amounts[c].toFixed(2))),
+      ...COLUMNS_FALLBACK.map((c) => (r.amounts[c] === null || r.amounts[c] === undefined ? "" : r.amounts[c].toFixed(2))),
     ].map((v) => `<td>${escapeHtml(String(v))}</td>`).join("");
     const casoBadge = r.caso
       ? `<span class="badge">${r.caso}</span>`
@@ -772,18 +905,59 @@ downloadBtn.addEventListener("click", async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("Planilla");
 
-    const headers = ["Corr.", "Codigo", "Nombre Empleado", "Agencia / Centro de Costo", ...COLUMNS, "revisar_manualmente", "motivo_revision"];
+    const headers = ["Corr.", "Codigo", "Nombre Empleado", "Agencia / Centro de Costo", ...COLUMNS_FALLBACK, "revisar_manualmente", "motivo_revision"];
     sheet.addRow(headers);
     sheet.getRow(1).font = { bold: true };
     sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF1F5" } };
 
+    // Totales por agencia + total general (seccion "primero necesito que me
+    // totalices los excels"): suma cada columna de monto, igual que las
+    // filas "TOTALES POR CENTRO DE COSTO" / "TOTAL GENERAL" del PDF, para
+    // poder cruzar cifras sin salir de Excel. Las filas marcadas para
+    // revision (revisar_manualmente) se EXCLUYEN de la suma -- sus montos
+    // pueden estar corridos/incompletos por texto solapado en el PDF, y
+    // sumarlos silenciosamente daria un total incorrecto. En vez de eso se
+    // cuentan aparte y se informan en la misma fila de totales.
+    const emptyAccum = () => Object.fromEntries(COLUMNS_FALLBACK.map((c) => [c, 0]));
+    let agencyAccum = emptyAccum();
+    let agencyCount = 0;
+    let agencyExcluded = 0;
+    let agencyLabel = null;
+    const grandAccum = emptyAccum();
+    let grandCount = 0;
+    let grandExcluded = 0;
+
+    function addTotalRow(label, accum, count, excluded, fillArgb) {
+      const empleadosLabel = excluded > 0
+        ? `Empleados: ${count} (${excluded} en revisión, no incluido en la suma)`
+        : `Empleados: ${count}`;
+      const rowValues = [
+        "", "", label, empleadosLabel,
+        ...COLUMNS_FALLBACK.map((c) => Math.round(accum[c] * 100) / 100),
+        "", "",
+      ];
+      const totalRow = sheet.addRow(rowValues);
+      totalRow.font = { bold: true };
+      totalRow.eachCell((cell) => {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillArgb } };
+      });
+    }
+
     for (const r of lastResult.rows) {
+      if (agencyLabel !== null && r.agencia !== agencyLabel) {
+        addTotalRow(`TOTALES ${agencyLabel}`, agencyAccum, agencyCount, agencyExcluded, "FFDCE6F1");
+        agencyAccum = emptyAccum();
+        agencyCount = 0;
+        agencyExcluded = 0;
+      }
+      agencyLabel = r.agencia;
+
       const rowValues = [
         Number(r.corr),
         r.codigo,
         r.nombre,
         r.agencia || "",
-        ...COLUMNS.map((c) => (r.amounts[c] === null || r.amounts[c] === undefined ? null : r.amounts[c])),
+        ...COLUMNS_FALLBACK.map((c) => (r.amounts[c] === null || r.amounts[c] === undefined ? null : r.amounts[c])),
         r.revisar ? "TRUE" : "FALSE",
         r.motivo || "",
       ];
@@ -793,11 +967,33 @@ downloadBtn.addEventListener("click", async () => {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2A8" } };
         });
       }
+
+      agencyCount += 1;
+      grandCount += 1;
+      if (r.revisar) {
+        agencyExcluded += 1;
+        grandExcluded += 1;
+      } else {
+        for (const c of COLUMNS_FALLBACK) {
+          const v = r.amounts[c];
+          if (typeof v === "number") {
+            agencyAccum[c] += v;
+            grandAccum[c] += v;
+          }
+        }
+      }
+    }
+
+    if (agencyLabel !== null) {
+      addTotalRow(`TOTALES ${agencyLabel}`, agencyAccum, agencyCount, agencyExcluded, "FFDCE6F1");
+    }
+    if (grandCount > 0) {
+      addTotalRow("TOTAL GENERAL", grandAccum, grandCount, grandExcluded, "FFB8CCE4");
     }
 
     // Formato numerico real (no texto) en las columnas de montos
     const firstAmountCol = 5; // A=Corr,B=Codigo,C=Nombre,D=Agencia,E=primer monto
-    for (let i = 0; i < COLUMNS.length; i++) {
+    for (let i = 0; i < COLUMNS_FALLBACK.length; i++) {
       sheet.getColumn(firstAmountCol + i).numFmt = "#,##0.00";
     }
     sheet.getColumn(1).numFmt = "0";
