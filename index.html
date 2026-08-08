@@ -557,8 +557,10 @@ function parseCodigoNombre(blobTokens) {
     }
   }
 
-  // Ningun caso aplico con certeza -> revisar manualmente, NO se adivina
-  return { codigo: first, nombre: blobTokens.join(" "), caso: null, revisar: true };
+  // Ningun caso aplico con certeza -> revisar manualmente, NO se adivina.
+  // El candidato a codigo ('first') ya se devuelve por separado en
+  // 'codigo': no repetirlo tambien al inicio de 'nombre'.
+  return { codigo: first, nombre: resto.join(" "), caso: null, revisar: true };
 }
 
 /* ============================================================
@@ -976,10 +978,12 @@ downloadBtn.addEventListener("click", async () => {
     }
 
     if (grandCount > 0) {
-      // "Dias Laborados" no se totaliza -- sumar dias trabajados entre
-      // empleados distintos no tiene sentido como cifra agregada.
+      // "Dias Laborados" no se totaliza (sumar dias trabajados entre
+      // empleados distintos no tiene sentido) y la columna de agencia queda
+      // en blanco en la fila de totales -- solo "TOTAL GENERAL" y los
+      // montos.
       const rowValues = [
-        "", "", "TOTAL GENERAL", `Empleados: ${grandCount}`,
+        "", "", "TOTAL GENERAL", "",
         ...COLUMNS_FALLBACK.map((c) => (c === "Dias Laborados" ? "" : Math.round(grandAccum[c] * 100) / 100)),
       ];
       const totalRow = sheet.addRow(rowValues);
