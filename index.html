@@ -461,6 +461,37 @@ function splitGluedMoneyTokens(tokens) {
   return result;
 }
 
+const STRAY_LEADING_LETTER_RE = /^([A-ZÁÉÍÓÚÑ])(\d{1,2}\.\d{2})$/;
+const WORD_GLUED_TO_NUMBER_RE = /^([A-ZÁÉÍÓÚÑ]{2,})(\d{1,2}\.\d{2})$/;
+
+// Cuando un nombre muy largo invade la columna de Dias Laborados, a veces
+// el apellido queda pegado sin espacio al numero (ej. 'MADRID15.00' en vez
+// de 'MADRID' + '15.00', o con pdfplumber a veces sobra solo la ultima
+// letra al inicio del numero: 'MADRI' + 'D15.00'). A diferencia de una
+// corrupcion de caracteres real (varias letras y digitos entreverados, ej.
+// '1D5O.00', que no se puede desarmar con certeza), en ambos casos el
+// nombre y el numero son perfectamente reconocibles por separado -- se
+// puede recomponer sin adivinar.
+function mergeStrayLeadingLetters(tokens) {
+  const result = [];
+  for (const t of tokens) {
+    const wordGlued = WORD_GLUED_TO_NUMBER_RE.exec(t);
+    if (wordGlued) {
+      result.push(wordGlued[1], wordGlued[2]);
+      continue;
+    }
+    const stray = STRAY_LEADING_LETTER_RE.exec(t);
+    const prev = result[result.length - 1];
+    if (stray && prev && /^[A-ZÁÉÍÓÚÑ]+$/.test(prev)) {
+      result[result.length - 1] = prev + stray[1];
+      result.push(stray[2]);
+    } else {
+      result.push(t);
+    }
+  }
+  return result;
+}
+
 function isExcludedLine(line) {
   const stripped = line.trim();
   if (!stripped) return true;
@@ -517,12 +548,27 @@ function tryInitialsMatch(codeCandidate, nameWords) {
   return letterVariants.some((letters) => initialsVariants.has(letters));
 }
 
+// Excepciones confirmadas a mano: codigos que el algoritmo de iniciales no
+// puede verificar (ver seccion 4.6 -- nunca se adivina), pero que ya se
+// revisaron contra el PDF original y se sabe que son correctos. Solo aplica
+// si el codigo Y el nombre reconstruido coinciden exactamente; si el mismo
+// codigo aparece con un nombre distinto en otra planilla, NO se usa la
+// excepcion y la fila se marca para revision como cualquier otra.
+const CODIGOS_CONFIRMADOS = {
+  LECG: "LILIANA ESTEFANY CARDOZA DE TEJADA",
+};
+
 // Aplica el orden de reglas de la seccion 4.5. Devuelve {codigo, nombre, caso, revisar}.
 function parseCodigoNombre(blobTokens) {
   if (!blobTokens.length) return { codigo: "", nombre: "", caso: null, revisar: true };
 
   const first = blobTokens[0];
   const resto = blobTokens.slice(1);
+
+  // Excepcion confirmada a mano (ver CODIGOS_CONFIRMADOS)
+  if (CODIGOS_CONFIRMADOS[first] === resto.join(" ")) {
+    return { codigo: first, nombre: resto.join(" "), caso: "A", revisar: false };
+  }
 
   // Caso A: el primer token YA es el codigo completo (habia espacio real en el PDF)
   if (tryInitialsMatch(first, resto)) {
@@ -665,7 +711,7 @@ function parseLines(lineObjs, columnsOrder) {
 
     if (EMPLEADO_RE.test(line)) {
       pendingAgencyCandidate = null;
-      const tokens = splitGluedMoneyTokens(line.split(/\s+/));
+      const tokens = mergeStrayLeadingLetters(splitGluedMoneyTokens(line.split(/\s+/)));
       const corr = tokens[0];
 
       if (tokens.length < 18) {
