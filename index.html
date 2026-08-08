@@ -934,39 +934,24 @@ downloadBtn.addEventListener("click", async () => {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet("Planilla");
 
-    const headers = ["Corr.", "Codigo", "Nombre Empleado", "Agencia / Centro de Costo", ...COLUMNS_FALLBACK, "revisar_manualmente", "motivo_revision"];
+    // Sin columnas de diagnostico (revisar_manualmente / motivo_revision) en
+    // el Excel de salida -- las filas que necesitan revision se marcan solo
+    // con el resaltado amarillo pastel, sin explicacion en columna aparte.
+    const headers = ["Corr.", "Codigo", "Nombre Empleado", "Agencia / Centro de Costo", ...COLUMNS_FALLBACK];
     sheet.addRow(headers);
     sheet.getRow(1).font = { bold: true };
     sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEEF1F5" } };
 
-    // Totales por agencia + total general (seccion "primero necesito que me
-    // totalices los excels"): suma cada columna de monto, igual que las
-    // fila "TOTAL GENERAL" del PDF, para poder cruzar cifras sin salir de
-    // Excel. Las filas marcadas para revision (revisar_manualmente) se
-    // EXCLUYEN de la suma -- sus montos pueden estar corridos/incompletos
-    // por texto solapado en el PDF, y sumarlos silenciosamente daria un
-    // total incorrecto. En vez de eso se cuentan aparte y se informan en la
-    // misma fila de totales.
-    const emptyAccum = () => Object.fromEntries(COLUMNS_FALLBACK.map((c) => [c, 0]));
-    const grandAccum = emptyAccum();
+    // Total general: suma cada columna de monto de forma INDEPENDIENTE,
+    // tomando el valor de cualquier fila donde esa columna especifica se
+    // pudo leer bien -- no se descarta la fila entera solo porque OTRA
+    // columna suya (tipicamente Dias Laborados) quedo dudosa. Esto es lo que
+    // hace que el total coincida con el "TOTAL GENERAL" del PDF: la mayoria
+    // de las filas marcadas para revision tienen un solo dato incierto, no
+    // los 17. Solo se omite, columna por columna, el valor puntual que no
+    // se pudo leer con certeza (nunca se inventa un numero).
+    const grandAccum = Object.fromEntries(COLUMNS_FALLBACK.map((c) => [c, 0]));
     let grandCount = 0;
-    let grandExcluded = 0;
-
-    function addTotalRow(label, accum, count, excluded, fillArgb) {
-      const empleadosLabel = excluded > 0
-        ? `Empleados: ${count} (${excluded} en revisión, no incluido en la suma)`
-        : `Empleados: ${count}`;
-      const rowValues = [
-        "", "", label, empleadosLabel,
-        ...COLUMNS_FALLBACK.map((c) => Math.round(accum[c] * 100) / 100),
-        "", "",
-      ];
-      const totalRow = sheet.addRow(rowValues);
-      totalRow.font = { bold: true };
-      totalRow.eachCell((cell) => {
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillArgb } };
-      });
-    }
 
     for (const r of lastResult.rows) {
       const rowValues = [
@@ -975,8 +960,6 @@ downloadBtn.addEventListener("click", async () => {
         r.nombre,
         r.agencia || "",
         ...COLUMNS_FALLBACK.map((c) => (r.amounts[c] === null || r.amounts[c] === undefined ? null : r.amounts[c])),
-        r.revisar ? "TRUE" : "FALSE",
-        r.motivo || "",
       ];
       const excelRow = sheet.addRow(rowValues);
       if (r.revisar) {
@@ -986,20 +969,22 @@ downloadBtn.addEventListener("click", async () => {
       }
 
       grandCount += 1;
-      if (r.revisar) {
-        grandExcluded += 1;
-      } else {
-        for (const c of COLUMNS_FALLBACK) {
-          const v = r.amounts[c];
-          if (typeof v === "number") {
-            grandAccum[c] += v;
-          }
-        }
+      for (const c of COLUMNS_FALLBACK) {
+        const v = r.amounts[c];
+        if (typeof v === "number") grandAccum[c] += v;
       }
     }
 
     if (grandCount > 0) {
-      addTotalRow("TOTAL GENERAL", grandAccum, grandCount, grandExcluded, "FFB8CCE4");
+      const rowValues = [
+        "", "", "TOTAL GENERAL", `Empleados: ${grandCount}`,
+        ...COLUMNS_FALLBACK.map((c) => Math.round(grandAccum[c] * 100) / 100),
+      ];
+      const totalRow = sheet.addRow(rowValues);
+      totalRow.font = { bold: true };
+      totalRow.eachCell((cell) => {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFB8CCE4" } };
+      });
     }
 
     // Formato numerico real (no texto) en las columnas de montos
@@ -1014,7 +999,6 @@ downloadBtn.addEventListener("click", async () => {
       col.width = Math.max(10, Math.min(40, header.length + 4));
     });
     sheet.getColumn(3).width = 38; // Nombre
-    sheet.getColumn(headers.length).width = 60; // motivo_revision
     sheet.views = [{ state: "frozen", ySplit: 1 }];
 
     const buffer = await workbook.xlsx.writeBuffer();
